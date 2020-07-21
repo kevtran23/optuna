@@ -1,44 +1,101 @@
-"""
-Optuna example that optimizes a classifier configuration for cancer dataset using LightGBM tuner.
-
-In this example, we optimize the validation log loss of cancer detection.
-
-You can execute this code directly.
-    $ python lightgbm_tuner_simple.py
-
-"""
-
+import pandas as pd
 import numpy as np
-import sklearn.datasets
-from sklearn.metrics import accuracy_score
-from sklearn.model_selection import train_test_split
+import torch
+import random
 
-import optuna.integration.lightgbm as lgb
+from pathlib import Path
+from tqdm import tqdm
+from shutil import copyfile
+from collections import defaultdict
+from sklearn.metrics.ranking import roc_auc_score
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.model_selection import cross_val_score
+from sklearn.model_selection import cross_validate
+from statistics import mean 
+from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.neural_network import MLPClassifier
 
 
-if __name__ == "__main__":
-    data, target = sklearn.datasets.load_breast_cancer(return_X_y=True)
-    train_x, val_x, train_y, val_y = train_test_split(data, target, test_size=0.25)
-    dtrain = lgb.Dataset(train_x, label=train_y)
-    dval = lgb.Dataset(val_x, label=val_y)
 
-    params = {
-        "objective": "binary",
-        "metric": "binary_logloss",
-        "verbosity": -1,
-        "boosting_type": "gbdt",
-    }
 
-    model = lgb.train(
-        params, dtrain, valid_sets=[dtrain, dval], verbose_eval=100, early_stopping_rounds=100,
-    )
 
-    prediction = np.rint(model.predict(val_x, num_iteration=model.best_iteration))
-    accuracy = accuracy_score(val_y, prediction)
+val_data = pd.read_csv(Path('/deep/group/RareXpert/kevin/all_cam_val.csv'))
+val_data = torch.tensor(val_data.values)
+val_features = val_data[:,1:val_data.shape[1] -1]
+val_labels = pd.read_csv(Path('/deep/group/RareXpert/ground_truth_val.csv'))
+val_labels = torch.tensor(val_labels.values)[:,1]
 
-    best_params = model.params
-    print("Best params:", best_params)
-    print("  Accuracy = {}".format(accuracy))
-    print("  Params: ")
-    for key, value in best_params.items():
-        print("    {}: {}".format(key, value))
+
+test_data = pd.read_csv(Path('/deep/group/RareXpert/kevin/all_cam_test.csv'))
+test_data = torch.tensor(test_data.values)
+test_features = test_data[:,1:test_data.shape[1] -1]
+test_labels = pd.read_csv(Path('/deep/group/RareXpert/ground_truth_test.csv'))
+test_labels = torch.tensor(test_labels.values)[:,1]
+
+
+# Logistic Regression
+clf = LogisticRegression(random_state=0)
+clf = clf.fit(val_features, val_labels)
+val_pred = clf.predict(val_features)
+val_auc = roc_auc_score(val_labels, val_pred)
+print(val_auc)
+
+test_pred = clf.predict(test_features)
+test_auc = roc_auc_score(test_labels, test_pred)
+print(test_auc)
+
+# Decision Tree 
+clf = DecisionTreeClassifier(max_depth = 2)
+
+cv_results = cross_validate(clf, val_features , y=val_labels, cv=3, scoring='roc_auc',return_estimator=True)
+estimators = list(cv_results['estimator'])
+
+val_predictions = []
+for i in range(len(estimators)):
+  val_predictions.append(torch.from_numpy(estimators[i].predict(val_features)))
+val_pred = torch.mean(torch.stack(val_predictions).float(),axis=0)
+val_auc = roc_auc_score(val_labels, val_pred)
+print(val_auc)
+
+test_predictions = []
+for i in range(len(estimators)):
+  test_predictions.append(torch.from_numpy(estimators[i].predict(test_features)))
+test_pred = torch.mean(torch.stack(test_predictions).float(),axis=0)
+test_auc = roc_auc_score(test_labels, test_pred)
+print(test_auc)
+
+
+# Random Forest 
+clf = RandomForestClassifier(n_estimators = 100, max_depth=2)
+cv_results = cross_validate(clf, val_features , y=val_labels, cv=3, scoring='roc_auc',return_estimator=True)
+estimators = list(cv_results['estimator'])
+
+val_predictions = []
+for i in range(len(estimators)):
+  val_predictions.append(torch.from_numpy(estimators[i].predict(val_features)))
+val_pred = torch.mean(torch.stack(val_predictions).float(),axis=0)
+val_auc = roc_auc_score(val_labels, val_pred)
+print(val_auc)
+
+test_predictions = []
+for i in range(len(estimators)):
+  test_predictions.append(torch.from_numpy(estimators[i].predict(test_features)))
+test_pred = torch.mean(torch.stack(test_predictions).float(),axis=0)
+test_auc = roc_auc_score(test_labels, test_pred)
+print(test_auc)
+
+# Neural Network 
+classifier = MLPClassifier(hidden_layer_sizes=(5),max_iter=10000,activation = 'relu',solver='adam',random_state=1, learning_rate='adaptive')
+classifier.fit(val_features, val_labels)
+y_pred = classifier.predict(val_features)
+test_auc = roc_auc_score(val_labels, y_pred)
+print(test_auc)
+y_pred = classifier.predict(test_features)
+test_auc = roc_auc_score(test_labels, y_pred)
+test_auc = roc_auc_score(test_labels, y_pred)
+print(test_auc)
+
+
+
+
